@@ -69,9 +69,24 @@ Full clone is kept (pinning/versioning). Symlinks
 
 ## Version support
 
-- Matching: `bd_meta_info` (5.15+) / `bd_part->info` (5.10)
+- Matching: ref-pinned `dev_t` resolution — `blkdev_get_no_open`
+  (5.11+) / `get_gendisk`+`disk_get_part` (5.10). The cached bdev
+  pointer is never trusted: rescan frees it with direct kfree, so the
+  lookup holds a reference (see `tests/race-fuzz.sh`). The helpers are
+  the *no-open* variants on purpose — openers would re-enter our own
+  `file_open` hook.
 - LSM add: name-style (≤6.6) / `lsm_id`+`LSM_ID_UNDEF` (6.8+)
-- Registration: `.name`-style everywhere
+- Registration: `device_initcall` everywhere (`security_initcall`
+  exists on none of our trees; ordered `DEFINE_LSM` dispatch silently
+  skipped 5.10)
+
+## Testing
+
+`tests/race-fuzz.sh` storms write-opens and `BLKDISCARD` on a protected
+node while storming `BLKRRPART` on its LUN, then asserts the `denied`
+counter climbed and KASAN stayed quiet. Targets resolve through
+`/dev/block/by-name` (`LABEL=nvram` suffices). See `tests/TESTING.md`
+for the KASAN build inputs and exit codes.
 
 ## Inspiration
 
