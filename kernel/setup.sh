@@ -33,7 +33,7 @@ perform_cleanup() {
     grep -q "partition-guard" "$SECURITY_MAKEFILE" 2>/dev/null && sed -i '/partition-guard/d' "$SECURITY_MAKEFILE" && echo "[-] Makefile reverted."
     grep -q "security/partition-guard/Kconfig" "$SECURITY_KCONFIG" 2>/dev/null && sed -i '/security\/partition-guard\/Kconfig/d' "$SECURITY_KCONFIG" && echo "[-] Kconfig reverted."
     grep -q "partition_guard" "$SECURITY_KCONFIG" 2>/dev/null && sed -i 's/,partition_guard//g' "$SECURITY_KCONFIG" && echo "[-] LSM list reverted."
-    grep -q "GUARD_HAS_NO_OPEN_DECL" "$GKI_ROOT/$NAME/kernel/src/Makefile" 2>/dev/null && sed -i '/GUARD_HAS_NO_OPEN_DECL/d' "$GKI_ROOT/$NAME/kernel/src/Makefile" && echo "[-] compat flag reverted."
+    grep -q "GUARD_NO_OPEN" "$GKI_ROOT/$NAME/kernel/src/Makefile" 2>/dev/null && sed -i '/GUARD_NO_OPEN/d' "$GKI_ROOT/$NAME/kernel/src/Makefile" && echo "[-] compat flag reverted."
 }
 
 setup_guard() {
@@ -105,15 +105,26 @@ setup_guard() {
         exit 1
     fi
 
-    # Compat probe (BBG pattern): public blkdev_get_no_open() decl means
-    # pre-removal tree; post-removal guard.c uses an extern decl instead.
-    # Probe the tree, never guess versions. Idempotent append.
-    if grep -q "blkdev_get_no_open" "$SECURITY_DIR/../include/linux/blkdev.h" 2>/dev/null; then
-        grep -q "GUARD_HAS_NO_OPEN_DECL" "$GKI_ROOT/$NAME/kernel/src/Makefile" || \
-            printf '\nccflags-y += -DGUARD_HAS_NO_OPEN_DECL\n' >> "$GKI_ROOT/$NAME/kernel/src/Makefile"
-        echo "[+] blkdev_get_no_open: public decl, flag set."
+    # Compat probe: test the declaration's ARITY, not its name. The name
+    # alone is ambiguous: 1-arg public (<=5.17), 2-arg public (5.18
+    # through the hiding after 6.2), private extern (later). A name-only
+    # grep would call 1-arg against a public 2-arg decl and fail the
+    # build. Probe the tree, never guess versions. Idempotent append.
+    DECL=$(grep "blkdev_get_no_open" "$SECURITY_DIR/../include/linux/blkdev.h" 2>/dev/null | head -1)
+    case "$DECL" in
+        *bool*)
+            FLAG="GUARD_NO_OPEN_2ARG" ;;
+        *dev_t*)
+            FLAG="GUARD_NO_OPEN_1ARG" ;;
+        *)
+            FLAG="" ;;
+    esac
+    if [ -n "$FLAG" ]; then
+        grep -q "$FLAG" "$GKI_ROOT/$NAME/kernel/src/Makefile" || \
+            printf "\nccflags-y += -D%s\n" "$FLAG" >> "$GKI_ROOT/$NAME/kernel/src/Makefile"
+        echo "[+] blkdev_get_no_open: $FLAG."
     else
-        echo "[+] blkdev_get_no_open: private (post-removal style), extern path."
+        echo "[+] blkdev_get_no_open: private, extern path."
     fi
 
     echo "[+] Done."
