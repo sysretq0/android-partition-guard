@@ -25,7 +25,7 @@ skip() { echo "SKIP: $*" >&2; exit 2; }
 note() { echo ".... $*"; }
 
 [ "$(id -u)" = "0" ] || skip "must run as root"
-for t in timeout blockdev dd cat grep python3 sed readlink; do
+for t in timeout blockdev dd cat grep sed readlink; do
 	command -v "$t" >/dev/null 2>&1 || skip "missing tool: $t"
 done
 
@@ -77,18 +77,36 @@ timeout "$DUR" sh -c "while true; do blockdev --rereadpt $DISK 2>/dev/null; done
 P2=$!
 wait $P1 $P2
 
-# Phase 2: O_RDONLY + BLKDISCARD (ioctl resolution) vs rescan storm.
-# Denied by the hook — but lookup runs first, which is what we are testing.
-note "phase 2/${DUR}s: BLKDISCARD storm on $PART + BLKRRPART on $DISK"
-timeout "$DUR" sh -c "while true; do python3 -c '
-import fcntl, os, struct
-fd = os.open(\"$PART\", os.O_RDONLY)
+# Discard issuer, best first: raw ioctl binary (tests/guard-ioctl.c) or
+# python3 issue O_RDONLY + BLKDISCARD, which reaches the ioctl hook.
+# busybox blkdiscard opens O_WRONLY, so it only re-tests the open hook —
+# still useful race load, but named honestly.
+ISSUER="${ISSUER:-/data/local/tmp/guard-ioctl}"
+if [ -x "$ISSUER" ]; then
+	note "discard issuer: $ISSUER (ioctl path)"
+	DO_DISCARD="$ISSUER $REAL 2>/dev/null"
+elif command -v python3 >/dev/null 2>&1; then
+	note "discard issuer: python3 (ioctl path)"
+	DO_DISCARD="python3 -c 'import fcntl,os,struct; fd=os.open(\"$REAL\",os.O_RDONLY)
 try:
-    fcntl.ioctl(fd, 0x1277, struct.pack(\"QQ\", 0, 4096))
-except OSError:
-    pass
-os.close(fd)
-' 2>/dev/null; done" &
+ fcntl.ioctl(fd,0x1277,struct.pack(\"QQ\",0,4096))
+except OSError: pass
+os.close(fd)' 2>/dev/null"
+else
+	for BB in /data/adb/ksu/bin/busybox busybox; do
+		if "$BB" blkdiscard --help >/dev/null 2>&1; then
+			note "discard issuer: $BB blkdiscard (open path only — no ioctl coverage)"
+			DO_DISCARD="$BB blkdiscard -o 0 -l 4096 $REAL 2>/dev/null"
+			break
+		fi
+	done
+	[ -n "${DO_DISCARD-}" ] || skip "no BLKDISCARD issuer (guard-ioctl, python3, or busybox)"
+fi
+
+# Phase 2: BLKDISCARD storm (ioctl resolution) vs rescan storm.
+# Denied by the hook — but lookup runs first, which is what we are testing.
+note "phase 2/${DUR}s: BLKDISCARD storm on $REAL + BLKRRPART on $DISK"
+timeout "$DUR" sh -c "while true; do $DO_DISCARD; done" &
 P3=$!
 timeout "$DUR" sh -c "while true; do blockdev --rereadpt $DISK 2>/dev/null; done" &
 P4=$!

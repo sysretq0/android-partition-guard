@@ -32,6 +32,18 @@ cat /sys/kernel/partition_guard/denied               # climbs by 1
 
 ## Race fuzz (KASAN kernel only)
 
+`tests/guard-ioctl.c` is a 1.7K static aarch64 raw-syscall helper that
+issues `O_RDONLY` + `BLKDISCARD` with no libc — the only reliable way to
+reach the ioctl hook from a shell (toybox/busybox `blkdiscard` opens
+`O_WRONLY` and dies at the open hook instead). Build and push it:
+
+```sh
+clang --target=aarch64-linux-gnu -nostdlib -static -O2 \
+  -o guard-ioctl tests/guard-ioctl.c
+adb push guard-ioctl /data/local/tmp/guard-ioctl
+adb shell chmod 755 /data/local/tmp/guard-ioctl
+```
+
 ```sh
 adb push tests/race-fuzz.sh /data/local/tmp/
 # by-name resolution is automatic; LABEL alone picks the target:
