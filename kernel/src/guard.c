@@ -199,7 +199,11 @@ static bool guard_name_hit(const char *volname)
  * kfree (not RCU-deferred) while we would be comparing. disk_get_part
  * (5.10) pins the hd_struct; blkdev_get_no_open (5.11+) pins the bdev.
  * Gone partition -> NULL -> fail-open, never freed memory.
- */
+ *
+ * NOTE: these are deliberately the *no-open* variants. Anything that
+ * opens the device (e.g. blkdev_get_by_dev) invokes ->open(), which
+ * re-enters security_file_open from inside this very hook. Do not
+ * "upgrade" them. */
 static bool guard_protected_dev(dev_t dev)
 {
 	bool hit = false;
