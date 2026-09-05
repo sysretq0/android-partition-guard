@@ -109,8 +109,15 @@ setup_guard() {
     # alone is ambiguous: 1-arg public (<=5.17), 2-arg public (5.18
     # through the hiding after 6.2), private extern (later). A name-only
     # grep would call 1-arg against a public 2-arg decl and fail the
-    # build. Probe the tree, never guess versions. Idempotent append.
-    DECL=$(grep "blkdev_get_no_open" "$SECURITY_DIR/../include/linux/blkdev.h" 2>/dev/null | head -1)
+    # build. Newlines are collapsed first so a wrapped parameter list
+    # can't strand the bool on the next line and misread as 1-arg; bool
+    # is tested before dev_t because the 2-arg line contains both.
+    # Deliberately text, not a $CC try-compile: setup runs pre-defconfig,
+    # so generated/autoconf.h doesn't exist yet and kernel headers won't
+    # standalone-compile — a false negative there would misclassify every
+    # 1-arg tree as 2-arg, worse than any grep. Probe the tree, never
+    # guess versions. Idempotent append.
+    DECL=$(tr '\n' ' ' < "$SECURITY_DIR/../include/linux/blkdev.h" 2>/dev/null | grep -o "blkdev_get_no_open([^)]*)" | head -1)
     case "$DECL" in
         *bool*)
             FLAG="GUARD_NO_OPEN_2ARG" ;;
