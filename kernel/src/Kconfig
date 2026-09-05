@@ -1,0 +1,20 @@
+menu "Partition Guard (per-device anti-format)"
+
+config PARTITION_GUARD
+	bool "Partition Guard: protect NVRAM/persist/EFS from userspace writes"
+	default y
+	depends on SECURITY && BLOCK
+	help
+	  Data-driven LSM that denies write-opens and destructive ioctls
+	  (discard/zeroout) on per-device partitions (NVRAM identity,
+	  persist, EFS), matched by GPT label against a runtime list.
+
+	  Scope discipline: ONLY partitions that are per-device unique
+	  and never written by OTAs, fastboot, or recovery. Boot,
+	  recovery, modem firmware and super are deliberately NOT
+	  covered, so flashing and OTA flows can never be blocked.
+
+	  List: compiled-in defaults, replaceable via
+	  partition_guard.protect=, extensible via
+	  partition_guard.extend=, switchable via
+	  partition_guard.disable and sysfs.
