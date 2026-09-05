@@ -376,22 +376,14 @@ static int __init guard_init(void)
 }
 
 /*
- * Registration follows Baseband Guard's lead: security_initcall by
- * default. The CONFIG_LSM ordered dispatch can silently skip an LSM
- * (observed on 5.10: code linked, CONFIG_LSM listed, init never ran,
- * zero boot output, no sysfs, writes allowed), while a plain
- * security_initcall always runs and registers the hooks directly.
- * DEFINE_LSM stays available via PARTITION_GUARD_USE_DEFINE_LSM for
- * trees that need ordered init (e.g. blob sharing, which we don't use).
+ * Registration is a plain device_initcall on all trees. Rationale:
+ * the CONFIG_LSM ordered dispatch silently skipped us on 5.10 (code
+ * linked, CONFIG_LSM listed, init never ran, zero boot output), and
+ * security_initcall (Baseband Guard's default) exists on none of our
+ * trees. device_initcall always runs before userspace init, needs no
+ * per-tree probing, and suits us: no blob sharing, no stacking deps.
  */
-#ifndef PARTITION_GUARD_USE_DEFINE_LSM
-security_initcall(guard_init);
-#else
-DEFINE_LSM(partition_guard) = {
-	.name = "partition_guard",
-	.init = guard_init,
-};
-#endif
+device_initcall(guard_init);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("sysretq0");
