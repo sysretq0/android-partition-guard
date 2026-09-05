@@ -42,6 +42,19 @@ Kernel cmdline:
 Sysfs (`/sys/kernel/partition_guard/`): `enabled` (rw), `protected` (ro),
 `add`/`remove` (wo).
 
+## Threat model (honest version)
+
+- Stops: buggy scripts, reckless apps, malware that writes named
+  partitions without knowing about the guard. Deny is fail-closed on
+  identified partitions.
+- Fail-open where it cannot identify: whole-disk opens and non-GPT
+  devices are allowed (it only judges what it can name).
+- NOT a boundary against root: root can `echo 0 > enabled`, remove
+  names, or boot with `partition_guard.disable`. Same honesty as
+  SELinux permissive — this is a guardrail, not a cage.
+- No protection against fastboot/recovery writes (different kernel)
+  — which is also why flashing can never break.
+
 ## Install
 
 ```sh

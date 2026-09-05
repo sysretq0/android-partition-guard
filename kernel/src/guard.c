@@ -27,6 +27,8 @@
 #include <linux/security.h>
 #include <linux/lsm_hooks.h>
 #include <linux/fs.h>
+#include <linux/kdev_t.h>
+#include <linux/mm.h>
 #include <linux/blkdev.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0)
 #include <linux/genhd.h>
@@ -60,6 +62,15 @@ static bool guard_enabled = true;
 static bool guard_cmdline_touched;
 static DEFINE_SPINLOCK(guard_lock);
 
+static void guard_strip(char *name)
+{
+	size_t len = strlen(name);
+
+	while (len > 0 && (name[len - 1] == '\n' ||
+			name[len - 1] == ' ' || name[len - 1] == '\t'))
+		name[--len] = '\0';
+}
+
 static void guard_add_one(const char *name)
 {
 	size_t len;
@@ -70,6 +81,7 @@ static void guard_add_one(const char *name)
 		return;
 	while (*name == ',' || *name == ' ')
 		name++;
+	guard_strip((char *)name);
 	len = strnlen(name, GUARD_NAME_LEN);
 	if (len == 0 || len >= GUARD_NAME_LEN)
 		return;
@@ -100,6 +112,7 @@ static void guard_del_one(const char *name)
 		return;
 	while (*name == ',' || *name == ' ')
 		name++;
+	guard_strip((char *)name);
 	len = strnlen(name, GUARD_NAME_LEN);
 	if (len == 0 || len >= GUARD_NAME_LEN)
 		return;
@@ -166,7 +179,7 @@ static bool guard_protected_bdev(struct block_device *bdev)
 	bool hit = false;
 	unsigned long flags;
 
-	if (!guard_enabled)
+	if (!READ_ONCE(guard_enabled))
 		return false;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
 	if (bdev->bd_meta_info)
@@ -251,7 +264,7 @@ static ssize_t guard_enabled_store(struct kobject *kobj,
 	unsigned long flags;
 
 	spin_lock_irqsave(&guard_lock, flags);
-	guard_enabled = (buf[0] == '1');
+	WRITE_ONCE(guard_enabled, (buf[0] == '1'));
 	spin_unlock_irqrestore(&guard_lock, flags);
 	return count;
 }
@@ -263,9 +276,12 @@ static ssize_t guard_protected_show(struct kobject *kobj,
 	unsigned long flags;
 
 	spin_lock_irqsave(&guard_lock, flags);
-	for (i = 0; i < guard_count; i++)
+	for (i = 0; i < guard_count; i++) {
+		if (len + GUARD_NAME_LEN >= PAGE_SIZE)
+			break;
 		len += scnprintf(buf + len, PAGE_SIZE - len, "%s\n",
 				 guard_names[i]);
+	}
 	spin_unlock_irqrestore(&guard_lock, flags);
 	return len;
 }
