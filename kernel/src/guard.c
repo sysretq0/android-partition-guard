@@ -2,6 +2,10 @@
 /*
  * Partition Guard - data-driven LSM protecting per-device partitions.
  *
+ * Inspired by Baseband Guard (vc-teahouse, showdo): hook points,
+ * installer shape, and LSM activation follow its lead; the list,
+ * scope, and compat approach are our own.
+ *
  * Scope discipline: ONLY partitions that are (a) per-device unique
  * (NVRAM identity, persist, EFS) and (b) never written by OTAs, fastboot,
  * or recovery. Boot, recovery, modem firmware and super are deliberately

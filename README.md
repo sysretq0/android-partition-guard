@@ -60,6 +60,16 @@ Full clone is kept (pinning/versioning). Symlinks
 - LSM add: name-style (≤6.6) / `lsm_id`+`LSM_ID_UNDEF` (6.8+)
 - Registration: `.name`-style everywhere
 
+## Inspiration
+
+[Baseband Guard](https://github.com/vc-teahouse/Baseband-guard) by
+showdo — the hook points (open-write, destructive ioctls), the
+installer shape (clone, symlink, Makefile/Kconfig hooks), and the LSM-list
+activation all follow its lead. Partition Guard differs deliberately:
+data-driven list instead of hardcoded partitions, NVRAM/persist/EFS scope
+instead of everything (no boot/recovery option to foot-gun with), no
+setattr hook, no legacy-kernel selinux patching.
+
 ## License
 
 GPL-2.0-only. See LICENSE.
