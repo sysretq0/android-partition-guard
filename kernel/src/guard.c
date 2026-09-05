@@ -21,6 +21,7 @@
  * destroyed through it.
  */
 
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -37,7 +38,6 @@
 #include <linux/sysfs.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
-#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
 #include <uapi/linux/lsm.h>
 #endif
@@ -174,7 +174,7 @@ __setup("partition_guard.disable", guard_opt_disable);
 
 static bool guard_protected_bdev(struct block_device *bdev)
 {
-	const u8 *volname = NULL;
+	const char *volname = NULL;
 	unsigned int i;
 	bool hit = false;
 	unsigned long flags;
@@ -183,10 +183,10 @@ static bool guard_protected_bdev(struct block_device *bdev)
 		return false;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
 	if (bdev->bd_meta_info)
-		volname = bdev->bd_meta_info->volname;
+		volname = (const char *)bdev->bd_meta_info->volname;
 #else
 	if (bdev->bd_part && bdev->bd_part->info)
-		volname = bdev->bd_part->info->volname;
+		volname = (const char *)bdev->bd_part->info->volname;
 #endif
 	if (!volname || !volname[0])
 		return false;
