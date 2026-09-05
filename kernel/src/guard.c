@@ -210,19 +210,7 @@ static bool guard_protected_dev(dev_t dev)
 
 	if (!READ_ONCE(guard_enabled))
 		return false;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-	{
-		struct block_device *bdev = blkdev_get_no_open(dev);
-		const struct partition_meta_info *info;
-
-		if (IS_ERR_OR_NULL(bdev))
-			return false;
-		info = READ_ONCE(bdev->bd_meta_info);
-		if (info && info->volname[0])
-			hit = guard_name_hit((const char *)info->volname);
-		blkdev_put_no_open(bdev);
-	}
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
 	{
 		struct gendisk *disk;
 		int partno = 0;
@@ -243,6 +231,41 @@ static bool guard_protected_dev(dev_t dev)
 			}
 		}
 		put_disk(disk);
+	}
+#elif defined(GUARD_HAS_NO_OPEN_DECL)
+	{
+		struct block_device *bdev = blkdev_get_no_open(dev);
+		const struct partition_meta_info *info;
+
+		if (!bdev)
+			return false;
+		info = READ_ONCE(bdev->bd_meta_info);
+		if (info && info->volname[0])
+			hit = guard_name_hit((const char *)info->volname);
+		blkdev_put_no_open(bdev);
+	}
+#else
+	/*
+	 * Post-6.12: blkdev_get_no_open() has no public declaration and
+	 * takes an autoload flag; it lives in block/bdev.c, unexported.
+	 * We are bool-built-in so an extern declaration links fine.
+	 * autoload is false: an LSM hook must never trigger module
+	 * autoload (request_module -> userspace helper) from inside
+	 * open/ioctl.
+	 */
+	{
+		extern struct block_device *blkdev_get_no_open(dev_t dev,
+							       bool autoload);
+		extern void blkdev_put_no_open(struct block_device *bdev);
+		struct block_device *bdev = blkdev_get_no_open(dev, false);
+		const struct partition_meta_info *info;
+
+		if (!bdev)
+			return false;
+		info = READ_ONCE(bdev->bd_meta_info);
+		if (info && info->volname[0])
+			hit = guard_name_hit((const char *)info->volname);
+		blkdev_put_no_open(bdev);
 	}
 #endif
 	return hit;

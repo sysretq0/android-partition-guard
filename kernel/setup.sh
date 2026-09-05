@@ -33,6 +33,7 @@ perform_cleanup() {
     grep -q "partition-guard" "$SECURITY_MAKEFILE" 2>/dev/null && sed -i '/partition-guard/d' "$SECURITY_MAKEFILE" && echo "[-] Makefile reverted."
     grep -q "security/partition-guard/Kconfig" "$SECURITY_KCONFIG" 2>/dev/null && sed -i '/security\/partition-guard\/Kconfig/d' "$SECURITY_KCONFIG" && echo "[-] Kconfig reverted."
     grep -q "partition_guard" "$SECURITY_KCONFIG" 2>/dev/null && sed -i 's/,partition_guard//g' "$SECURITY_KCONFIG" && echo "[-] LSM list reverted."
+    grep -q "GUARD_HAS_NO_OPEN_DECL" "$GKI_ROOT/$NAME/kernel/src/Makefile" 2>/dev/null && sed -i '/GUARD_HAS_NO_OPEN_DECL/d' "$GKI_ROOT/$NAME/kernel/src/Makefile" && echo "[-] compat flag reverted."
 }
 
 setup_guard() {
@@ -102,6 +103,17 @@ setup_guard() {
     else
         echo "[ERROR] LSM list update failed (no selinux token in defaults?)."
         exit 1
+    fi
+
+    # Compat probe (BBG pattern): public blkdev_get_no_open() decl means
+    # pre-removal tree; post-removal guard.c uses an extern decl instead.
+    # Probe the tree, never guess versions. Idempotent append.
+    if grep -q "blkdev_get_no_open" "$SECURITY_DIR/../include/linux/blkdev.h" 2>/dev/null; then
+        grep -q "GUARD_HAS_NO_OPEN_DECL" "$GKI_ROOT/$NAME/kernel/src/Makefile" || \
+            printf '\nccflags-y += -DGUARD_HAS_NO_OPEN_DECL\n' >> "$GKI_ROOT/$NAME/kernel/src/Makefile"
+        echo "[+] blkdev_get_no_open: public decl, flag set."
+    else
+        echo "[+] blkdev_get_no_open: private (post-removal style), extern path."
     fi
 
     echo "[+] Done."
