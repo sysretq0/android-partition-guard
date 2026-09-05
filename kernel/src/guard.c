@@ -37,6 +37,7 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <linux/spinlock.h>
+#include <linux/atomic.h>
 #include <linux/string.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
 #include <uapi/linux/lsm.h>
@@ -61,6 +62,7 @@ static unsigned int guard_count;
 static bool guard_enabled = true;
 static bool guard_cmdline_touched;
 static DEFINE_SPINLOCK(guard_lock);
+static atomic_t guard_denied = ATOMIC_INIT(0);
 
 static void guard_strip(char *name)
 {
@@ -172,24 +174,11 @@ static int __init guard_opt_disable(char *str)
 }
 __setup("partition_guard.disable", guard_opt_disable);
 
-static bool guard_protected_bdev(struct block_device *bdev)
+static bool guard_name_hit(const char *volname)
 {
-	const char *volname = NULL;
 	unsigned int i;
 	bool hit = false;
 	unsigned long flags;
-
-	if (!READ_ONCE(guard_enabled))
-		return false;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
-	if (bdev->bd_meta_info)
-		volname = (const char *)bdev->bd_meta_info->volname;
-#else
-	if (bdev->bd_part && bdev->bd_part->info)
-		volname = (const char *)bdev->bd_part->info->volname;
-#endif
-	if (!volname || !volname[0])
-		return false;
 
 	spin_lock_irqsave(&guard_lock, flags);
 	for (i = 0; i < guard_count; i++) {
@@ -203,6 +192,58 @@ static bool guard_protected_bdev(struct block_device *bdev)
 	return hit;
 }
 
+/*
+ * Resolve dev_t -> GPT volname with a held reference (BBG blkdev_helper
+ * pattern). Never trust the cached bdev->bd_part / bd_meta_info pointer:
+ * a concurrent partition-table rescan runs delete_partition with direct
+ * kfree (not RCU-deferred) while we would be comparing. disk_get_part
+ * (5.10) pins the hd_struct; blkdev_get_no_open (5.11+) pins the bdev.
+ * Gone partition -> NULL -> fail-open, never freed memory.
+ */
+static bool guard_protected_dev(dev_t dev)
+{
+	bool hit = false;
+
+	if (!READ_ONCE(guard_enabled))
+		return false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+	{
+		struct block_device *bdev = blkdev_get_no_open(dev);
+		const struct partition_meta_info *info;
+
+		if (IS_ERR_OR_NULL(bdev))
+			return false;
+		info = READ_ONCE(bdev->bd_meta_info);
+		if (info && info->volname[0])
+			hit = guard_name_hit((const char *)info->volname);
+		blkdev_put_no_open(bdev);
+	}
+#else
+	{
+		struct gendisk *disk;
+		int partno = 0;
+
+		disk = get_gendisk(dev, &partno);
+		if (!disk)
+			return false;
+		if (partno > 0) {
+			struct hd_struct *part = disk_get_part(disk, partno);
+			const struct partition_meta_info *info;
+
+			if (part) {
+				info = READ_ONCE(part->info);
+				if (info && info->volname[0])
+					hit = guard_name_hit(
+						(const char *)info->volname);
+				disk_put_part(part);
+			}
+		}
+		put_disk(disk);
+	}
+#endif
+	return hit;
+}
+
 static int guard_file_open(struct file *file)
 {
 	struct inode *inode = file_inode(file);
@@ -211,10 +252,11 @@ static int guard_file_open(struct file *file)
 		return 0;
 	if (!S_ISBLK(inode->i_mode))
 		return 0;
-	if (!guard_protected_bdev(I_BDEV(inode)))
+	if (!guard_protected_dev(inode->i_rdev))
 		return 0;
 	pr_warn_ratelimited("partition-guard: denied write open on protected partition (dev %u:%u)\n",
 			    MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
+	atomic_inc(&guard_denied);
 	return -EPERM;
 }
 
@@ -232,10 +274,11 @@ static int guard_deny_ioctl(struct file *file, unsigned int cmd)
 	}
 	if (!S_ISBLK(inode->i_mode))
 		return 0;
-	if (!guard_protected_bdev(I_BDEV(inode)))
+	if (!guard_protected_dev(inode->i_rdev))
 		return 0;
 	pr_warn_ratelimited("partition-guard: denied destructive ioctl %u on protected partition (dev %u:%u)\n",
 			    cmd, MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
+	atomic_inc(&guard_denied);
 	return -EPERM;
 }
 
@@ -312,6 +355,12 @@ static ssize_t guard_remove_store(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t guard_denied_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&guard_denied));
+}
+
 static struct kobj_attribute guard_enabled_attr =
 	__ATTR(enabled, 0644, guard_enabled_show, guard_enabled_store);
 static struct kobj_attribute guard_protected_attr =
@@ -320,12 +369,15 @@ static struct kobj_attribute guard_add_attr =
 	__ATTR(add, 0200, NULL, guard_add_store);
 static struct kobj_attribute guard_remove_attr =
 	__ATTR(remove, 0200, NULL, guard_remove_store);
+static struct kobj_attribute guard_denied_attr =
+	__ATTR(denied, 0444, guard_denied_show, NULL);
 
 static struct attribute *guard_attrs[] = {
 	&guard_enabled_attr.attr,
 	&guard_protected_attr.attr,
 	&guard_add_attr.attr,
 	&guard_remove_attr.attr,
+	&guard_denied_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(guard);
